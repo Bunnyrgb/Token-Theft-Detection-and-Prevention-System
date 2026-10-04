@@ -11,7 +11,7 @@ export function middleware(request: NextRequest) {
 
   const isAuthenticated = hasAccessToken || (hasRefreshToken && hasSessionId);
 
-  // Protected Dashboard Routes
+  // Protected Dashboard Routes: redirect unauthenticated requests to /login
   if (pathname.startsWith("/dashboard")) {
     if (!isAuthenticated) {
       const loginUrl = new URL("/login", request.url);
@@ -20,16 +20,9 @@ export function middleware(request: NextRequest) {
     }
   }
 
-  // Auth pages (redirect to dashboard if already logged in)
-  if (pathname === "/login" || pathname === "/register") {
-    if (isAuthenticated) {
-      return NextResponse.redirect(new URL("/dashboard", request.url));
-    }
-  }
-
   return NextResponse.next();
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/login", "/register"],
+  matcher: ["/dashboard/:path*"],
 };
