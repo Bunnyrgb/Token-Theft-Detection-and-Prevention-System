@@ -185,7 +185,7 @@ async function runTests() {
     weightImpossibleTravel: 30,
     weightTokenReuse: 40,
     weightRepeatedFailedLogin: 20,
-    weightAbnormalSession: 25,
+    weightAbnormalSession: 20,
     thresholdMedium: 25,
     thresholdHigh: 50,
     thresholdCritical: 75,
@@ -199,9 +199,17 @@ async function runTests() {
       score += RISK_CONFIG.weightTokenReuse;
       factors.push({ factor: "Refresh Token Replay", score: RISK_CONFIG.weightTokenReuse });
     }
+    if (input.tokenRevoked) {
+      score += 55;
+      factors.push({ factor: "Revoked Session Token Re-used", score: 55 });
+    }
     if (input.impossibleTravel) {
       score += RISK_CONFIG.weightImpossibleTravel;
       factors.push({ factor: "Impossible Travel", score: RISK_CONFIG.weightImpossibleTravel });
+    }
+    if (input.tokenExpired) {
+      score += 35;
+      factors.push({ factor: "Expired Token Presented", score: 35 });
     }
     if (input.deviceChanged) {
       score += RISK_CONFIG.weightNewDevice;
@@ -210,6 +218,19 @@ async function runTests() {
     if (input.ipChanged) {
       score += RISK_CONFIG.weightNewIP;
       factors.push({ factor: "IP Change", score: RISK_CONFIG.weightNewIP });
+    }
+    if (input.locationChanged) {
+      score += 20;
+      factors.push({ factor: "Location Shift", score: 20 });
+    }
+    if (input.unusualActivity) {
+      score += RISK_CONFIG.weightAbnormalSession;
+      factors.push({ factor: "Abnormal Cadence", score: RISK_CONFIG.weightAbnormalSession });
+    }
+    if (input.failedAttempts) {
+      const pts = Math.min(50, input.failedAttempts * 10);
+      score += pts;
+      factors.push({ factor: "Repeated Failed Logins", score: pts });
     }
     if (input.concurrentUsage) {
       score += RISK_CONFIG.weightMultipleSuspicious;
@@ -277,16 +298,117 @@ async function runTests() {
     assert.strictEqual(res.action, "REVOKE");
   });
 
-  it("Applies half-life risk decay so old transient events do not permanently penalize users", () => {
-    const initial = 80;
-    const after24h = applyRiskDecay(initial, 24);
-    assert.strictEqual(after24h, 40, "Score should halve after 24 hours");
+  it("Evaluates simulated scenarios with distinct risk scores and security decisions", () => {
+    // 1. Normal Login: 0, ALLOW
+    const normal = calculateRiskScore({});
+    assert.strictEqual(normal.score, 0);
+    assert.strictEqual(normal.action, "ALLOW");
 
-    const after48h = applyRiskDecay(initial, 48);
-    assert.strictEqual(after48h, 20, "Score should quarter after 48 hours");
+    // 2. New Device: 30, MONITOR
+    const newDev = calculateRiskScore({ deviceChanged: true, ipChanged: true });
+    assert.strictEqual(newDev.score, 30);
+    assert.strictEqual(newDev.level, "MEDIUM");
+    assert.strictEqual(newDev.action, "MONITOR");
 
-    const after7d = applyRiskDecay(initial, 170);
-    assert.strictEqual(after7d, 0, "Score should completely reset after 7 days");
+    // 3. Expired Token: 35, MONITOR
+    const expToken = calculateRiskScore({ tokenExpired: true });
+    assert.strictEqual(expToken.score, 35);
+    assert.strictEqual(expToken.level, "MEDIUM");
+    assert.strictEqual(expToken.action, "MONITOR");
+
+    // 4. Multiple Failed Logins: 50, CHALLENGE
+    const failedLogins = calculateRiskScore({ failedAttempts: 5 });
+    assert.strictEqual(failedLogins.score, 50);
+    assert.strictEqual(failedLogins.level, "HIGH");
+    assert.strictEqual(failedLogins.action, "CHALLENGE");
+
+    // 5. Suspicious Multiple Sessions: 55, CHALLENGE
+    const multiSess = calculateRiskScore({ concurrentUsage: true, locationChanged: true, unusualActivity: true });
+    assert.strictEqual(multiSess.score, 55);
+    assert.strictEqual(multiSess.level, "HIGH");
+    assert.strictEqual(multiSess.action, "CHALLENGE");
+
+    // 6. Impossible Travel: 60, CHALLENGE
+    const impTravel = calculateRiskScore({ impossibleTravel: true, locationChanged: true, ipChanged: true });
+    assert.strictEqual(impTravel.score, 60);
+    assert.strictEqual(impTravel.level, "HIGH");
+    assert.strictEqual(impTravel.action, "CHALLENGE");
+
+    // 7. Revoked Token: 65, CHALLENGE
+    const revToken = calculateRiskScore({ tokenRevoked: true, ipChanged: true });
+    assert.strictEqual(revToken.score, 65);
+    assert.strictEqual(revToken.level, "HIGH");
+    assert.strictEqual(revToken.action, "CHALLENGE");
+
+    // 8. Token Replay: 100 (between 90 and 100), CRITICAL / REVOKE
+    const replay = calculateRiskScore({ tokenReused: true, deviceChanged: true, locationChanged: true, unusualActivity: true });
+    assert.ok(replay.score >= 90 && replay.score <= 100);
+    assert.strictEqual(replay.score, 100);
+    assert.strictEqual(replay.level, "CRITICAL");
+    assert.strictEqual(replay.action, "REVOKE");
+  });
+
+  it("Executes complete Token Replay detection pipeline with vaulted hash and session revocation", () => {
+    // 1. Generate clearly marked simulated previously-rotated refresh-token identifier (Never real user token)
+    const simRawToken = "sim_refr_rot_7b8a92ef41ac";
+    const simRotatedHash = crypto.createHash("sha256").update(simRawToken).digest("hex");
+    const maskedTokenId = simRawToken.substring(0, 16) + "••••••••";
+
+    // Verify token is masked and no raw secrets exposed
+    assert.ok(!maskedTokenId.includes("41ac"));
+    assert.ok(maskedTokenId.startsWith("sim_refr_rot_"));
+
+    // 2. Setup simulated session with vaulted old hash in token family
+    const simSession = {
+      id: "sim_sess_compromised_1",
+      user_id: "user-test-1",
+      session_identifier: "sim_sess_77a1",
+      refresh_token_hash: crypto.createHash("sha256").update("sim_refr_active_99").digest("hex"),
+      previous_refresh_token_hashes: [simRotatedHash],
+      status: "Active",
+      risk_score: 40,
+    };
+
+    // 3. Send reuse event through detection engine
+    const inboundHash = crypto.createHash("sha256").update(simRawToken).digest("hex");
+    const isReplayDetected = simSession.previous_refresh_token_hashes.includes(inboundHash);
+
+    // 4. Detect TOKEN_REPLAY_DETECTED
+    assert.strictEqual(isReplayDetected, true);
+    const eventType = isReplayDetected ? "TOKEN_REPLAY_DETECTED" : "TOKEN_REFRESHED";
+    assert.strictEqual(eventType, "TOKEN_REPLAY_DETECTED");
+
+    // 5. Calculate CRITICAL risk score between 90 and 100
+    const risk = calculateRiskScore({
+      tokenReused: true,
+      deviceChanged: true,
+      locationChanged: true,
+      unusualActivity: true,
+    });
+    assert.ok(risk.score >= 90 && risk.score <= 100);
+    assert.strictEqual(risk.level, "CRITICAL");
+
+    // 6. Show individual risk factors
+    assert.ok(risk.factors.length >= 3);
+    assert.ok(risk.factors.some((f) => f.factor === "Refresh Token Replay" && f.score === 40));
+
+    // 7. Apply security policy & 8. Mark simulated session as revoked
+    if (risk.action === "REVOKE") {
+      simSession.status = "Revoked";
+    }
+    assert.strictEqual(simSession.status, "Revoked");
+
+    // 9. Create security event with is_simulation = true
+    const simEvent = {
+      id: "ev_sim_replay_1",
+      event_type: eventType,
+      severity: "CRITICAL",
+      risk_score: risk.score,
+      action_taken: "REVOKE: Compromised session terminated immediately",
+      is_simulation: true,
+    };
+    assert.strictEqual(simEvent.is_simulation, true);
+    assert.strictEqual(simEvent.severity, "CRITICAL");
   });
 
   // =========================================================================

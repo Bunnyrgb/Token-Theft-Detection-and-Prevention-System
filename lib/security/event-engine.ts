@@ -153,6 +153,42 @@ export const eventEngine = {
             "Allows users and security administrators to proactively isolate suspected security breaches.",
         };
 
+      case "TOKEN_REVOKED_ATTEMPT":
+        return {
+          whatHappened:
+            "An inbound request attempted to authenticate using credentials tied to a session that had already been explicitly revoked.",
+          whyIsThisDangerous:
+            "Signals that an attacker or stale background script is attempting to utilize retired credentials from a terminated session.",
+          howTokenGuardResponds:
+            "Rejects the request with HTTP 401 Unauthorized and flags the origin IP for suspicious credential reuse (+55).",
+          howCanItBePrevented:
+            "Immediately invalidate local client storage and clear cookies upon logout or administrative revocation.",
+        };
+
+      case "TOKEN_EXPIRED":
+        return {
+          whatHappened:
+            "A client presented an access or refresh token whose cryptographic expiration time had passed.",
+          whyIsThisDangerous:
+            "Can indicate client clock synchronization issues or an attacker attempting to replay stale captured session tokens.",
+          howTokenGuardResponds:
+            "Rejects the expired token, issues an informational security event, and prompts the user for re-authentication.",
+          howCanItBePrevented:
+            "Utilize short-lived access tokens (15m) combined with automated silent refresh rotation before token expiry.",
+        };
+
+      case "MULTIPLE_SESSIONS":
+        return {
+          whatHappened:
+            "Multiple concurrent active sessions were detected operating from disparate geographic or device endpoints simultaneously.",
+          whyIsThisDangerous:
+            "Concurrent multi-region usage frequently indicates credential leakage, shared accounts, or distributed proxy attacks.",
+          howTokenGuardResponds:
+            "Aggregates session risk, creates a SOC monitoring alert, and provides one-click bulk revocation for operators.",
+          howCanItBePrevented:
+            "Enforce concurrent session limits or require multi-factor verification when creating additional concurrent sessions.",
+        };
+
       default:
         return {
           whatHappened: `Security event [${event.event_type}] logged with severity [${event.severity}].`,
@@ -169,8 +205,10 @@ export const eventEngine = {
 
 function determineDefaultSeverity(type: SecurityEventType, score: number): EventSeverity {
   if (type === "TOKEN_REPLAY_DETECTED" || type === "TOKEN_REUSE_DETECTED") return "CRITICAL";
-  if (type === "IMPOSSIBLE_TRAVEL") return "HIGH";
+  if (type === "TOKEN_REVOKED_ATTEMPT") return "HIGH";
+  if (type === "IMPOSSIBLE_TRAVEL" || type === "MULTIPLE_SESSIONS") return "HIGH";
   if (type === "NEW_DEVICE" || type === "DEVICE_CHANGED") return "MEDIUM";
+  if (type === "TOKEN_EXPIRED") return "MEDIUM";
   if (type === "IP_CHANGED" || type === "NEW_IP") return "LOW";
   if (score >= 75) return "CRITICAL";
   if (score >= 50) return "HIGH";
@@ -183,8 +221,12 @@ function determineDefaultRisk(type: SecurityEventType): number {
     case "TOKEN_REPLAY_DETECTED":
     case "TOKEN_REUSE_DETECTED":
       return 40;
+    case "TOKEN_REVOKED_ATTEMPT":
+      return 55;
     case "IMPOSSIBLE_TRAVEL":
       return 30;
+    case "TOKEN_EXPIRED":
+      return 35;
     case "NEW_DEVICE":
     case "DEVICE_CHANGED":
       return 20;
@@ -216,6 +258,12 @@ function formatDefaultDescription(type: SecurityEventType, ip: string): string {
     case "TOKEN_REPLAY_DETECTED":
     case "TOKEN_REUSE_DETECTED":
       return `CRITICAL: Inbound request presented previously invalidated refresh token from IP ${ip}.`;
+    case "TOKEN_REVOKED_ATTEMPT":
+      return `HIGH RISK: Authentication attempted with credentials from an explicitly revoked session from ${ip}.`;
+    case "TOKEN_EXPIRED":
+      return `Client presented expired cryptographic token from IP ${ip}.`;
+    case "MULTIPLE_SESSIONS":
+      return `Suspicious concurrent active sessions detected across distinct endpoints from ${ip}.`;
     case "NEW_DEVICE":
     case "DEVICE_CHANGED":
       return `Unverified client device fingerprint detected from ${ip}.`;
@@ -239,6 +287,12 @@ function formatDefaultReason(type: SecurityEventType): string {
     case "TOKEN_REPLAY_DETECTED":
     case "TOKEN_REUSE_DETECTED":
       return "A previously rotated refresh-token identifier was presented again.";
+    case "TOKEN_REVOKED_ATTEMPT":
+      return "An explicit authentication attempt was made using credentials from a session marked Revoked.";
+    case "TOKEN_EXPIRED":
+      return "The cryptographic expiration timestamp of the provided token has passed.";
+    case "MULTIPLE_SESSIONS":
+      return "Multiple simultaneous active sessions detected from non-correlated IP addresses or regions.";
     case "IMPOSSIBLE_TRAVEL":
       return "Geographic displacement speed exceeds maximum plausible physical travel velocity.";
     case "NEW_DEVICE":
@@ -255,6 +309,9 @@ function formatDefaultAction(severity: EventSeverity, type: SecurityEventType): 
   if (severity === "CRITICAL" || type === "TOKEN_REPLAY_DETECTED" || type === "TOKEN_REUSE_DETECTED") {
     return "Session automatically revoked; tokens invalidated immediately.";
   }
+  if (type === "TOKEN_REVOKED_ATTEMPT") {
+    return "Request rejected (401 Unauthorized); incident logged to SOC alert feed.";
+  }
   if (severity === "HIGH") {
     return "Flagged for monitoring; step-up verification required.";
   }
@@ -269,6 +326,12 @@ function formatAlertTitle(type: SecurityEventType): string {
     case "TOKEN_REPLAY_DETECTED":
     case "TOKEN_REUSE_DETECTED":
       return "CRITICAL: Token Theft & Replay Attack Neutralized";
+    case "TOKEN_REVOKED_ATTEMPT":
+      return "HIGH: Authentication Attempt with Revoked Credentials";
+    case "TOKEN_EXPIRED":
+      return "NOTICE: Expired Token Re-authentication Required";
+    case "MULTIPLE_SESSIONS":
+      return "HIGH: Anomalous Concurrent Sessions Detected";
     case "IMPOSSIBLE_TRAVEL":
       return "HIGH: Impossible Travel Anomaly Detected";
     case "NEW_DEVICE":

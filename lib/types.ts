@@ -14,6 +14,8 @@ export type SecurityEventType =
   | "TOKEN_REFRESHED"
   | "TOKEN_ROTATED"
   | "TOKEN_REVOKED"
+  | "TOKEN_EXPIRED"
+  | "TOKEN_REVOKED_ATTEMPT"
   | "TOKEN_REUSE_DETECTED"
   | "TOKEN_REPLAY_DETECTED"
   | "SESSION_CREATED"
@@ -123,6 +125,8 @@ export interface RiskEvaluationInput {
   unusualActivity?: boolean;
   suspiciousUserAgent?: boolean;
   tokenReused?: boolean;
+  tokenExpired?: boolean;
+  tokenRevoked?: boolean;
   failedAttempts?: number;
   customFactors?: RiskFactor[];
 }

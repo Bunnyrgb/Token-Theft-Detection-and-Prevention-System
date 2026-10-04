@@ -28,7 +28,7 @@ export const DEFAULT_RISK_CONFIG: RiskConfig = {
   weightImpossibleTravel: 30,
   weightTokenReuse: 40,
   weightRepeatedFailedLogin: 20,
-  weightAbnormalSession: 25,
+  weightAbnormalSession: 20,
   thresholdMedium: 25,
   thresholdHigh: 50,
   thresholdCritical: 75,
@@ -141,7 +141,7 @@ export function calculateRisk(
 
   // 7. Repeated Failed Login Attempts
   if (input.failedAttempts && input.failedAttempts > 0) {
-    const pts = Math.min(30, input.failedAttempts * 10);
+    const pts = Math.min(50, input.failedAttempts * 10);
     score += pts;
     factors.push({
       factor: "Repeated Failed Logins",
@@ -151,7 +151,31 @@ export function calculateRisk(
     reasons.push(`Repeated authentication failures (${input.failedAttempts} attempts, +${pts})`);
   }
 
-  // 8. Custom Factors
+  // 8. Expired Token Presentation
+  if (input.tokenExpired) {
+    const pts = 35;
+    score += pts;
+    factors.push({
+      factor: "Expired Token Presented",
+      score: pts,
+      description: "A cryptographically expired access or refresh token was presented to an authenticated route.",
+    });
+    reasons.push("Presentation of expired authentication token (+35)");
+  }
+
+  // 9. Revoked Session Token Presented
+  if (input.tokenRevoked) {
+    const pts = 55;
+    score += pts;
+    factors.push({
+      factor: "Revoked Session Token Re-used",
+      score: pts,
+      description: "An explicit authentication attempt was made using credentials from a session marked Revoked.",
+    });
+    reasons.push("Attempted authentication with revoked session credentials (+55)");
+  }
+
+  // 10. Custom Factors
   if (input.customFactors) {
     for (const cf of input.customFactors) {
       score += cf.score;
@@ -227,6 +251,21 @@ function generateRiskExplanation(
     whyIsThisRisky = "This is a signature pattern of token theft or credential replay attack, indicating the credential was copied or intercepted.";
     actionTaken = "Compromised session was automatically revoked and tokens invalidated immediately.";
     userRecommendation = "Sign in again immediately with valid credentials and review your active sessions in the dashboard.";
+  } else if (factors.some((f) => f.factor.includes("Revoked Session Token"))) {
+    whatHappened = "An authentication attempt was detected using credentials from a session that had previously been revoked.";
+    whyIsThisRisky = "Revoked credentials should never be in active circulation; re-use indicates potential credential dumping, stolen cookies, or stale unauthorized sessions.";
+    actionTaken = "Request blocked and challenge notification dispatched to operator.";
+    userRecommendation = "Ensure any devices previously signed in have their local caches cleared and verify your active session inventory.";
+  } else if (factors.some((f) => f.factor.includes("Expired Token"))) {
+    whatHappened = "A cryptographically expired access or refresh token was presented to an authenticated route.";
+    whyIsThisRisky = "Expired tokens can indicate clock drift, an adversary using stale intercepted tokens, or an unrefreshed client application.";
+    actionTaken = "Token rejected; re-authentication required.";
+    userRecommendation = "Re-authenticate with current credentials to obtain fresh short-lived tokens.";
+  } else if (factors.some((f) => f.factor.includes("Multiple Concurrent Sessions"))) {
+    whatHappened = "Multiple distinct active sessions were detected operating concurrently across disparate locations or client environments.";
+    whyIsThisRisky = "Simultaneous multi-city or multi-environment usage frequently correlates with credential sharing, token exfiltration, or proxy routing.";
+    actionTaken = "Session placed under active telemetry monitoring and high-risk threshold flag.";
+    userRecommendation = "Review active sessions on the Sessions tab and terminate any sessions not recognized.";
   } else if (factors.some((f) => f.factor.includes("Impossible Travel"))) {
     whatHappened = "Requests for this session originated from two distant geographic locations within an impossible timeframe.";
     whyIsThisRisky = "A human user cannot physically travel between distant continents in minutes; this points to session hijacking or proxy relay abuse.";
