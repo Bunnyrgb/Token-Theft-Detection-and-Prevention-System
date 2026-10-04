@@ -14,9 +14,10 @@ import {
   Clock,
   Laptop,
   Globe2,
-  Trash2,
+  Lock,
   AlertOctagon,
   CheckCircle2,
+  Layers,
 } from "lucide-react";
 import { maskTokenIdentifier, maskIpAddress, formatRelativeTime } from "@/lib/utils";
 
@@ -50,7 +51,7 @@ export default function TokensManagementPage() {
       setActionLoading(id);
       const res = await fetch(`/api/sessions/${id}`, { method: "DELETE" });
       if (res.ok) {
-        setNotification({ message: "Token and session revoked successfully", type: "success" });
+        setNotification({ message: "Token family and session revoked successfully", type: "success" });
         await fetchTokens();
       } else {
         const d = await res.json();
@@ -68,7 +69,7 @@ export default function TokensManagementPage() {
       setActionLoading("rotate");
       const res = await fetch("/api/auth/refresh", { method: "POST" });
       if (res.ok) {
-        setNotification({ message: "Refresh token rotated and access token renewed", type: "success" });
+        setNotification({ message: "Refresh token rotated and new access token issued", type: "success" });
         await fetchTokens();
       } else {
         const d = await res.json();
@@ -84,8 +85,8 @@ export default function TokensManagementPage() {
   return (
     <div className="flex-1 flex flex-col">
       <DashboardTopbar
-        title="Token Management"
-        subtitle="Cryptographic token fingerprints, rotation state, and revocation controls"
+        title="Token Security & Lifecycle Management"
+        subtitle="Cryptographic token family tracking, rotation cycles, and instant revocation"
         onRefresh={fetchTokens}
       />
 
@@ -123,9 +124,9 @@ export default function TokensManagementPage() {
               <KeyRound className="h-6 w-6" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-white">Active Token Registry</h2>
+              <h2 className="text-base font-bold text-white">Active Token Registry & Family Vault</h2>
               <p className="text-xs text-slate-400">
-                Raw tokens are never exposed in plaintext. Obfuscated fingerprints guard against cross-scripting theft.
+                Raw tokens are never exposed in plaintext. Masked representations guard against DOM scraping and XSS exfiltration.
               </p>
             </div>
           </div>
@@ -136,9 +137,9 @@ export default function TokensManagementPage() {
               size="sm"
               onClick={handleManualRotate}
               isLoading={actionLoading === "rotate"}
-              className="w-full sm:w-auto"
+              className="w-full sm:w-auto text-xs"
             >
-              <RefreshCw className="h-3.5 w-3.5 mr-1" />
+              <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
               Rotate Current Refresh Token
             </Button>
           </div>
@@ -147,10 +148,10 @@ export default function TokensManagementPage() {
         {/* Tokens Table */}
         <Card className="glass-panel overflow-hidden">
           <CardHeader className="pb-3 border-b border-slate-800">
-            <CardTitle className="text-sm font-semibold uppercase tracking-wider text-slate-300 flex items-center justify-between">
-              <span>Token Fingerprints ({sessions.length})</span>
-              <span className="text-[11px] font-mono text-cyan-400">
-                HS256 Access / SHA-256 Refresh Hash
+            <CardTitle className="text-sm font-semibold uppercase tracking-wider text-slate-300 flex items-center justify-between font-mono">
+              <span>Token Registry ({sessions.length})</span>
+              <span className="text-[11px] font-mono text-cyan-400 font-normal">
+                HS256 Access (15m) / SHA-256 Rotated Refresh (7d)
               </span>
             </CardTitle>
           </CardHeader>
@@ -159,25 +160,26 @@ export default function TokensManagementPage() {
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="border-b border-slate-800 bg-slate-900/60 text-slate-400 uppercase font-mono tracking-wider text-[11px]">
-                    <th className="p-4 font-semibold">Token / Session ID</th>
-                    <th className="p-4 font-semibold">Device & Client</th>
-                    <th className="p-4 font-semibold">Network & Geo</th>
-                    <th className="p-4 font-semibold">Timestamps</th>
-                    <th className="p-4 font-semibold">Risk Index</th>
-                    <th className="p-4 font-semibold">Status</th>
+                    <th className="p-4 font-semibold">Masked Token / Session</th>
+                    <th className="p-4 font-semibold">Token Status</th>
+                    <th className="p-4 font-semibold">Issued At</th>
+                    <th className="p-4 font-semibold">Expires At</th>
+                    <th className="p-4 font-semibold">Last Rotation</th>
+                    <th className="p-4 font-semibold">Rotation Count</th>
+                    <th className="p-4 font-semibold">Risk Level</th>
                     <th className="p-4 font-semibold text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 font-sans">
                   {loading ? (
                     <tr>
-                      <td colSpan={7} className="p-8 text-center text-slate-500 font-mono">
+                      <td colSpan={8} className="p-8 text-center text-slate-500 font-mono">
                         Querying cryptographic token records...
                       </td>
                     </tr>
                   ) : sessions.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="p-8 text-center text-slate-500 font-mono">
+                      <td colSpan={8} className="p-8 text-center text-slate-500 font-mono">
                         No active tokens found.
                       </td>
                     </tr>
@@ -189,66 +191,25 @@ export default function TokensManagementPage() {
                           sess.is_current ? "bg-cyan-950/20" : ""
                         }`}
                       >
-                        {/* Safe Masked Token Fingerprint */}
+                        {/* Masked Token representation */}
                         <td className="p-4">
                           <div className="font-mono font-bold text-white flex items-center gap-2">
-                            <span>{sess.session_identifier}</span>
+                            <span>eyJhbGci...••••••••••</span>
                             {sess.is_current && (
                               <span className="text-[10px] uppercase font-sans font-bold px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                                This Session
+                                Current
                               </span>
                             )}
                           </div>
-                          <div className="text-[10px] text-slate-500 font-mono mt-0.5">
-                            UUID: {sess.id.slice(0, 8)}••••
+                          <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                            Session: {sess.session_identifier}
                           </div>
                         </td>
 
-                        {/* Device / Client */}
-                        <td className="p-4">
-                          <div className="text-slate-200 font-medium flex items-center gap-1.5">
-                            <Laptop className="h-3.5 w-3.5 text-slate-400" />
-                            <span>{sess.device?.device_name || "Unknown Device"}</span>
-                          </div>
-                          <div className="text-slate-400 text-[11px]">
-                            {sess.device?.browser || "Browser"} • {sess.device?.operating_system || "OS"}
-                          </div>
-                        </td>
-
-                        {/* IP & Location */}
-                        <td className="p-4">
-                          <div className="text-slate-200 font-mono">{maskIpAddress(sess.ip_address)}</div>
-                          <div className="text-slate-400 text-[11px] flex items-center gap-1 mt-0.5">
-                            <Globe2 className="h-3 w-3 text-slate-500" />
-                            <span>{sess.location || "Hyderabad, IN"}</span>
-                          </div>
-                        </td>
-
-                        {/* Timestamps */}
-                        <td className="p-4 space-y-0.5">
-                          <div className="text-slate-300 text-[11px]">
-                            <span className="text-slate-500">Active: </span>
-                            {formatRelativeTime(sess.last_used_at)}
-                          </div>
-                          <div className="text-slate-500 text-[10px]">
-                            <span>Expires: </span>
-                            {new Date(sess.expires_at).toLocaleDateString()}
-                          </div>
-                        </td>
-
-                        {/* Risk Index */}
-                        <td className="p-4">
-                          <div className="flex items-center gap-2">
-                            <Badge variant="risk" riskLevel={sess.risk_level}>
-                              {sess.risk_score} pts
-                            </Badge>
-                          </div>
-                        </td>
-
-                        {/* Status */}
+                        {/* Token Status */}
                         <td className="p-4">
                           <span
-                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ${
                               sess.status === "Active"
                                 ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
                                 : sess.status === "Suspicious"
@@ -265,8 +226,37 @@ export default function TokensManagementPage() {
                                   : "bg-rose-400"
                               }`}
                             />
-                            {sess.status}
+                            {sess.status === "Active" ? "Active (Valid)" : sess.status}
                           </span>
+                        </td>
+
+                        {/* Issued At */}
+                        <td className="p-4 font-mono text-slate-300 text-[11px]">
+                          <div>{new Date(sess.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+                          <div className="text-slate-500 text-[10px]">{new Date(sess.created_at).toLocaleDateString()}</div>
+                        </td>
+
+                        {/* Expires At */}
+                        <td className="p-4 font-mono text-slate-300 text-[11px]">
+                          <div>{new Date(sess.expires_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+                          <div className="text-slate-500 text-[10px]">{new Date(sess.expires_at).toLocaleDateString()}</div>
+                        </td>
+
+                        {/* Last Rotation */}
+                        <td className="p-4 text-slate-300 text-[11px]">
+                          {sess.last_rotated_at ? formatRelativeTime(sess.last_rotated_at) : formatRelativeTime(sess.last_used_at)}
+                        </td>
+
+                        {/* Rotation Count */}
+                        <td className="p-4 font-mono text-cyan-300 font-bold">
+                          {sess.rotation_count || 0} cycle{(sess.rotation_count || 0) === 1 ? "" : "s"}
+                        </td>
+
+                        {/* Risk Level */}
+                        <td className="p-4">
+                          <Badge variant="risk" riskLevel={sess.risk_level}>
+                            {sess.risk_level} ({sess.risk_score} pts)
+                          </Badge>
                         </td>
 
                         {/* Actions */}

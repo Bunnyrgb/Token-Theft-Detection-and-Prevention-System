@@ -7,6 +7,8 @@ import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
+import { DashboardClientWrapper } from "@/components/dashboard/dashboard-client-wrapper";
+
 export default async function DashboardLayout({
   children,
 }: {
@@ -32,9 +34,10 @@ export default async function DashboardLayout({
   return (
     <div className="flex min-h-screen bg-[#060913] text-slate-100 selection:bg-cyan-500/30 selection:text-cyan-200">
       <DashboardSidebar user={user} unreadAlerts={unreadAlerts} />
-      <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
+      <DashboardClientWrapper>
         {children}
-      </div>
+      </DashboardClientWrapper>
     </div>
   );
 }
+

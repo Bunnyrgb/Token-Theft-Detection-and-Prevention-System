@@ -19,8 +19,10 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { formatRelativeTime } from "@/lib/utils";
+import { useTelemetryMode } from "@/lib/context/telemetry-mode-context";
 
 export default function SecurityAlertsPage() {
+  const { mode } = useTelemetryMode();
   const [alerts, setAlerts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<"all" | "unread" | "resolved">("all");
@@ -29,7 +31,7 @@ export default function SecurityAlertsPage() {
   const fetchAlerts = async () => {
     try {
       setLoading(true);
-      const res = await fetch("/api/security/alerts");
+      const res = await fetch(`/api/security/alerts?mode=${mode}`);
       if (res.ok) {
         const data = await res.json();
         setAlerts(data.alerts || []);
@@ -43,7 +45,8 @@ export default function SecurityAlertsPage() {
 
   useEffect(() => {
     fetchAlerts();
-  }, []);
+  }, [mode]);
+
 
   const handleUpdateStatus = async (alertId: string, updates: { read?: boolean; resolved?: boolean }) => {
     try {

@@ -97,18 +97,25 @@ export default function DevicesPage() {
           </div>
         )}
 
-        {/* Info Banner */}
-        <div className="glass-panel p-5 rounded-xl border border-slate-800 flex items-start gap-4">
-          <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 shrink-0">
-            <Fingerprint className="h-6 w-6" />
+        {/* Info Banner & Limitations Notice */}
+        <div className="glass-panel p-5 rounded-xl border border-slate-800 space-y-3">
+          <div className="flex items-start gap-4">
+            <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 shrink-0">
+              <Fingerprint className="h-6 w-6" />
+            </div>
+            <div className="space-y-1">
+              <h2 className="text-base font-bold text-white">Cryptographic Device Registry</h2>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                TokenGuard generates deterministic SHA-256 hashes of client headers, browser architectures, and operating system properties. Unrecognized devices automatically trigger elevated risk levels and operator alerts.
+              </p>
+            </div>
           </div>
-          <div className="space-y-1">
-            <h2 className="text-base font-bold text-white">Cryptographic Device Registry</h2>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              TokenGuard generates deterministic SHA-256 hashes of client headers, browser architectures, and operating system properties. Unrecognized devices automatically trigger elevated risk levels and operator alerts.
-            </p>
+
+          <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 text-[11px] text-slate-400 leading-relaxed">
+            <strong className="text-slate-300">Technical Limitations:</strong> Device fingerprints are privacy-preserving heuristics based on browser and operating system telemetry. They do not constitute guaranteed, tamper-proof hardware identifiers. Browser updates, private browsing windows, or anti-fingerprinting extensions can alter these signals.
           </div>
         </div>
+
 
         {/* Device Cards Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">

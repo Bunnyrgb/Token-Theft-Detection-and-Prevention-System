@@ -22,6 +22,7 @@ interface LocalDatabaseSchema {
   sessions: Session[];
   security_events: SecurityEvent[];
   alerts: Alert[];
+  failed_logins?: { id: string; email: string; ip_address: string; user_agent: string; attempted_at: string }[];
 }
 
 const DB_FILE_PATH = path.join(process.cwd(), ".tokenguard-data.json");
@@ -35,12 +36,15 @@ function readLocalDb(): LocalDatabaseSchema {
         sessions: [],
         security_events: [],
         alerts: [],
+        failed_logins: [],
       };
       fs.writeFileSync(DB_FILE_PATH, JSON.stringify(initial, null, 2));
       return initial;
     }
     const data = fs.readFileSync(DB_FILE_PATH, "utf8");
-    return JSON.parse(data);
+    const parsed = JSON.parse(data);
+    if (!parsed.failed_logins) parsed.failed_logins = [];
+    return parsed;
   } catch (err) {
     return {
       users: [],
@@ -48,6 +52,7 @@ function readLocalDb(): LocalDatabaseSchema {
       sessions: [],
       security_events: [],
       alerts: [],
+      failed_logins: [],
     };
   }
 }
@@ -203,13 +208,16 @@ export const dbRepository = {
   },
 
   // ----------------------------------------------------
-  // SESSIONS
+  // SESSIONS & TOKEN LIFECYCLE
   // ----------------------------------------------------
   async createSession(session: Omit<Session, "id" | "created_at" | "last_used_at">): Promise<Session> {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
     const newSession: Session = {
       id,
+      rotation_count: session.rotation_count || 0,
+      previous_refresh_token_hashes: session.previous_refresh_token_hashes || [],
+      last_rotated_at: session.last_rotated_at || now,
       ...session,
       created_at: now,
       last_used_at: now,
@@ -254,21 +262,40 @@ export const dbRepository = {
       .sort((a, b) => new Date(b.last_used_at).getTime() - new Date(a.last_used_at).getTime());
   },
 
-  async findSessionByRefreshTokenHash(hash: string): Promise<Session | null> {
-    if (supabase) {
-      const { data } = await supabase.from("sessions").select("*, device:devices(*)").eq("refresh_token_hash", hash).maybeSingle();
-      if (data) return data as Session;
-    }
+  /**
+   * Evaluates if a given token hash matches active token OR previous rotated token family
+   */
+  async findSessionByAnyRefreshTokenHash(hash: string): Promise<{ session: Session; isReplay: boolean } | null> {
     const db = readLocalDb();
-    const sess = db.sessions.find((s) => s.refresh_token_hash === hash);
-    if (!sess) return null;
-    const device = db.devices.find((d) => d.id === sess.device_id);
-    return { ...sess, device };
+
+    // 1. Direct match on active token
+    const directMatch = db.sessions.find((s) => s.refresh_token_hash === hash);
+    if (directMatch) {
+      const device = db.devices.find((d) => d.id === directMatch.device_id);
+      return { session: { ...directMatch, device }, isReplay: false };
+    }
+
+    // 2. Match on previously rotated tokens (REPLAY DETECTED)
+    const replayMatch = db.sessions.find((s) => (s.previous_refresh_token_hashes || []).includes(hash));
+    if (replayMatch) {
+      const device = db.devices.find((d) => d.id === replayMatch.device_id);
+      return { session: { ...replayMatch, device }, isReplay: true };
+    }
+
+    if (supabase) {
+      const { data: active } = await supabase.from("sessions").select("*, device:devices(*)").eq("refresh_token_hash", hash).maybeSingle();
+      if (active) return { session: active as Session, isReplay: false };
+
+      const { data: replayed } = await supabase.from("sessions").select("*, device:devices(*)").contains("previous_refresh_token_hashes", [hash]).maybeSingle();
+      if (replayed) return { session: replayed as Session, isReplay: true };
+    }
+
+    return null;
   },
 
   async updateSessionActivity(
     sessionId: string,
-    updates: Partial<Pick<Session, "last_used_at" | "refresh_token_hash" | "risk_score" | "risk_level" | "status" | "location" | "ip_address">>
+    updates: Partial<Pick<Session, "last_used_at" | "refresh_token_hash" | "previous_refresh_token_hashes" | "rotation_count" | "last_rotated_at" | "risk_score" | "risk_level" | "status" | "location" | "ip_address">>
   ): Promise<boolean> {
     if (supabase) {
       const { error } = await supabase.from("sessions").update(updates).eq("id", sessionId);
@@ -360,6 +387,7 @@ export const dbRepository = {
     const now = new Date().toISOString();
     const newEvent: SecurityEvent = {
       id,
+      is_simulation: event.is_simulation || false,
       ...event,
       created_at: now,
     };
@@ -375,21 +403,67 @@ export const dbRepository = {
     return newEvent;
   },
 
-  async getSecurityEventsByUser(userId: string, limit = 50): Promise<SecurityEvent[]> {
+  async getSecurityEventsByUser(userId: string, limit = 50, filterSimulation?: boolean): Promise<SecurityEvent[]> {
     if (supabase) {
-      const { data } = await supabase
+      let query = supabase
         .from("security_events")
         .select("*")
         .eq("user_id", userId)
-        .order("created_at", { ascending: false })
-        .limit(limit);
+        .order("created_at", { ascending: false });
+
+      if (filterSimulation !== undefined) {
+        query = query.eq("is_simulation", filterSimulation);
+      }
+
+      const { data } = await query.limit(limit);
       if (data) return data as SecurityEvent[];
     }
     const db = readLocalDb();
-    return db.security_events
-      .filter((e) => e.user_id === userId)
+    let events = db.security_events.filter((e) => e.user_id === userId);
+    if (filterSimulation !== undefined) {
+      events = events.filter((e) => (filterSimulation ? e.is_simulation === true : !e.is_simulation));
+    }
+    return events
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
       .slice(0, limit);
+  },
+
+  // ----------------------------------------------------
+  // FAILED LOGIN TRACKING (BRUTE FORCE & SPRAY DETECTION)
+  // ----------------------------------------------------
+  async recordFailedLogin(email: string, ip_address: string, user_agent: string): Promise<void> {
+    const now = new Date().toISOString();
+    const id = crypto.randomUUID();
+    if (supabase) {
+      try {
+        await supabase.from("failed_logins").insert({ id, email: email.toLowerCase().trim(), ip_address, user_agent, attempted_at: now });
+      } catch {}
+    }
+    const db = readLocalDb();
+    if (!db.failed_logins) db.failed_logins = [];
+    db.failed_logins.push({ id, email: email.toLowerCase().trim(), ip_address, user_agent, attempted_at: now });
+    // Keep only last 1000 failed logins in local storage to prevent bloating
+    if (db.failed_logins.length > 1000) {
+      db.failed_logins = db.failed_logins.slice(-1000);
+    }
+    writeLocalDb(db);
+  },
+
+  async getRecentFailedLoginsCount(email: string, windowMinutes = 30): Promise<number> {
+    const cutoff = new Date(Date.now() - windowMinutes * 60 * 1000).toISOString();
+    if (supabase) {
+      try {
+        const { count } = await supabase
+          .from("failed_logins")
+          .select("*", { count: "exact", head: true })
+          .eq("email", email.toLowerCase().trim())
+          .gte("attempted_at", cutoff);
+        return count || 0;
+      } catch {}
+    }
+    const db = readLocalDb();
+    if (!db.failed_logins) return 0;
+    return db.failed_logins.filter((f) => f.email === email.toLowerCase().trim() && f.attempted_at >= cutoff).length;
   },
 
   // ----------------------------------------------------
@@ -400,6 +474,7 @@ export const dbRepository = {
     const now = new Date().toISOString();
     const newAlert: Alert = {
       id,
+      is_simulation: alert.is_simulation || false,
       ...alert,
       read: false,
       resolved: false,
@@ -417,19 +492,21 @@ export const dbRepository = {
     return newAlert;
   },
 
-  async getAlertsByUser(userId: string): Promise<Alert[]> {
+  async getAlertsByUser(userId: string, filterSimulation?: boolean): Promise<Alert[]> {
     if (supabase) {
-      const { data } = await supabase
-        .from("alerts")
-        .select("*")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false });
+      let query = supabase.from("alerts").select("*").eq("user_id", userId).order("created_at", { ascending: false });
+      if (filterSimulation !== undefined) {
+        query = query.eq("is_simulation", filterSimulation);
+      }
+      const { data } = await query;
       if (data) return data as Alert[];
     }
     const db = readLocalDb();
-    return db.alerts
-      .filter((a) => a.user_id === userId)
-      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    let list = db.alerts.filter((a) => a.user_id === userId);
+    if (filterSimulation !== undefined) {
+      list = list.filter((a) => (filterSimulation ? a.is_simulation === true : !a.is_simulation));
+    }
+    return list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   },
 
   async updateAlertStatus(userId: string, alertId: string, updates: { read?: boolean; resolved?: boolean }): Promise<boolean> {
@@ -448,3 +525,4 @@ export const dbRepository = {
     return false;
   },
 };
+

@@ -9,6 +9,10 @@ export async function GET(req: NextRequest) {
   if (!authResult.success) return authResult.errorResponse;
   const { auth } = authResult;
 
-  const alerts = await dbRepository.getAlertsByUser(auth.user.id);
+  const url = new URL(req.url);
+  const mode = url.searchParams.get("mode") || "all";
+  const filterSim = mode === "production" ? false : mode === "simulation" ? true : undefined;
+
+  const alerts = await dbRepository.getAlertsByUser(auth.user.id, filterSim);
   return NextResponse.json({ alerts });
 }

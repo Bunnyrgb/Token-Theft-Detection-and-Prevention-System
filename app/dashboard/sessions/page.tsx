@@ -17,15 +17,23 @@ import {
   CheckCircle2,
   AlertTriangle,
   RotateCcw,
+  RefreshCw,
+  Lock,
 } from "lucide-react";
 import { maskTokenIdentifier, maskIpAddress, formatRelativeTime } from "@/lib/utils";
+import { useRouter } from "next/navigation";
 
 export default function SessionsManagementPage() {
+  const router = useRouter();
   const [sessions, setSessions] = useState<any[]>([]);
   const [selectedSession, setSelectedSession] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [notification, setNotification] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [confirmModal, setConfirmModal] = useState<{
+    type: "single" | "all";
+    session?: any;
+  } | null>(null);
 
   const fetchSessions = async () => {
     try {
@@ -46,14 +54,18 @@ export default function SessionsManagementPage() {
     fetchSessions();
   }, []);
 
-  const handleRevokeSession = async (id: string) => {
+  const handleRevokeSession = async (sess: any) => {
     try {
-      setActionLoading(id);
-      const res = await fetch(`/api/sessions/${id}`, { method: "DELETE" });
+      setActionLoading(sess.id);
+      const res = await fetch(`/api/sessions/${sess.id}`, { method: "DELETE" });
       if (res.ok) {
         setNotification({ message: "Session revoked successfully", type: "success" });
-        if (selectedSession?.id === id) setSelectedSession(null);
+        if (selectedSession?.id === sess.id) setSelectedSession(null);
+        setConfirmModal(null);
         await fetchSessions();
+        if (sess.is_current) {
+          router.push("/login");
+        }
       } else {
         const d = await res.json();
         setNotification({ message: d.error || "Failed to revoke session", type: "error" });
@@ -90,6 +102,7 @@ export default function SessionsManagementPage() {
       const data = await res.json();
       if (res.ok) {
         setNotification({ message: data.message || "Revoked all other sessions", type: "success" });
+        setConfirmModal(null);
         await fetchSessions();
       } else {
         setNotification({ message: data.error || "Failed to revoke sessions", type: "error" });
@@ -149,9 +162,8 @@ export default function SessionsManagementPage() {
           <Button
             variant="destructive"
             size="sm"
-            onClick={handleRevokeAllOthers}
+            onClick={() => setConfirmModal({ type: "all" })}
             disabled={otherActiveSessionsCount === 0}
-            isLoading={actionLoading === "revoke-all"}
             className="w-full sm:w-auto text-xs"
           >
             <Ban className="h-3.5 w-3.5 mr-1" />
@@ -220,6 +232,20 @@ export default function SessionsManagementPage() {
                     <span className="font-mono text-slate-200">{maskIpAddress(sess.ip_address)}</span>
                   </div>
 
+                  {/* Token Status & Rotation Count */}
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-slate-400">Token Status:</span>
+                    <span className="font-mono text-cyan-300">
+                      Rotated {sess.rotation_count || 0} time{(sess.rotation_count || 0) === 1 ? "" : "s"}
+                    </span>
+                  </div>
+
+                  {/* Created timestamp */}
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-slate-400">Created:</span>
+                    <span className="text-slate-300">{formatRelativeTime(sess.created_at)}</span>
+                  </div>
+
                   {/* Last Active */}
                   <div className="flex justify-between items-center text-xs">
                     <span className="text-slate-400">Last active:</span>
@@ -228,10 +254,23 @@ export default function SessionsManagementPage() {
 
                   {/* Risk Level */}
                   <div className="flex justify-between items-center text-xs pt-1 border-t border-slate-800/60">
-                    <span className="text-slate-400">Risk:</span>
-                    <Badge variant="risk" riskLevel={sess.risk_level}>
-                      {sess.risk_level} ({sess.risk_score} pts)
-                    </Badge>
+                    <span className="text-slate-400">Status & Risk:</span>
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                          sess.status === "Active"
+                            ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                            : sess.status === "Suspicious"
+                            ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                            : "bg-rose-500/20 text-rose-300 border border-rose-500/30"
+                        }`}
+                      >
+                        {sess.status}
+                      </span>
+                      <Badge variant="risk" riskLevel={sess.risk_level}>
+                        {sess.risk_score} pts
+                      </Badge>
+                    </div>
                   </div>
                 </CardContent>
 
@@ -250,8 +289,7 @@ export default function SessionsManagementPage() {
                     <Button
                       variant="destructive"
                       size="sm"
-                      onClick={() => handleRevokeSession(sess.id)}
-                      isLoading={actionLoading === sess.id}
+                      onClick={() => setConfirmModal({ type: "single", session: sess })}
                       className="text-xs"
                     >
                       <Ban className="h-3.5 w-3.5 mr-1" />
@@ -274,6 +312,65 @@ export default function SessionsManagementPage() {
             ))
           )}
         </div>
+
+        {/* Confirmation Modal for Destructive Actions (Section 11 requirement) */}
+        {confirmModal && (
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-[#0e1424] border border-rose-500/40 rounded-2xl max-w-md w-full p-6 shadow-[0_0_50px_rgba(244,63,94,0.25)] space-y-4">
+              <div className="flex items-center gap-3 text-rose-400 border-b border-slate-800 pb-3">
+                <AlertTriangle className="h-6 w-6 shrink-0" />
+                <h3 className="text-base font-bold text-white font-mono">
+                  {confirmModal.type === "all" ? "Confirm Mass Session Revocation" : "Confirm Session Revocation"}
+                </h3>
+              </div>
+
+              <div className="text-xs text-slate-300 space-y-2 leading-relaxed">
+                {confirmModal.type === "all" ? (
+                  <p>
+                    Are you sure you want to revoke <strong>all {otherActiveSessionsCount} other active sessions</strong>? Active connections on other laptops, phones, and devices will be immediately disconnected.
+                  </p>
+                ) : (
+                  <p>
+                    Are you sure you want to revoke session <strong>{confirmModal.session?.session_identifier}</strong>?
+                    {confirmModal.session?.is_current && (
+                      <span className="block text-rose-300 font-bold mt-1">
+                        ⚠️ WARNING: This is your CURRENT session. Revoking it will log you out immediately.
+                      </span>
+                    )}
+                  </p>
+                )}
+                <p className="text-slate-500 text-[11px]">
+                  All associated refresh tokens and access tokens for this session will be permanently invalidated.
+                </p>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setConfirmModal(null)}
+                  disabled={!!actionLoading}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  isLoading={!!actionLoading}
+                  onClick={() => {
+                    if (confirmModal.type === "all") {
+                      handleRevokeAllOthers();
+                    } else if (confirmModal.session) {
+                      handleRevokeSession(confirmModal.session);
+                    }
+                  }}
+                >
+                  Confirm Revocation
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Session Detail Modal */}
         {selectedSession && (
@@ -309,10 +406,16 @@ export default function SessionsManagementPage() {
                     <span className="text-slate-500">Device Type:</span> {selectedSession.device?.device_type || "Desktop"}
                   </div>
                   <div>
+                    <span className="text-slate-500">Rotation Count:</span> {selectedSession.rotation_count || 0} cycles
+                  </div>
+                  <div>
                     <span className="text-slate-500">Network IP:</span> {maskIpAddress(selectedSession.ip_address)}
                   </div>
                   <div>
                     <span className="text-slate-500">Approx Location:</span> {selectedSession.location}
+                  </div>
+                  <div>
+                    <span className="text-slate-500">Expires:</span> {new Date(selectedSession.expires_at).toLocaleDateString()}
                   </div>
                 </div>
 
@@ -332,7 +435,10 @@ export default function SessionsManagementPage() {
                   <Button
                     variant="destructive"
                     size="sm"
-                    onClick={() => handleRevokeSession(selectedSession.id)}
+                    onClick={() => {
+                      setSelectedSession(null);
+                      setConfirmModal({ type: "single", session: selectedSession });
+                    }}
                   >
                     Revoke Session
                   </Button>

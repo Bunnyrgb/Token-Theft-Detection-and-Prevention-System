@@ -15,6 +15,7 @@ import {
   Settings,
   LogOut,
   ChevronRight,
+  BookOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -27,8 +28,10 @@ const navigationItems = [
   { name: "Security Alerts", href: "/dashboard/alerts", icon: BellRing },
   { name: "Analytics", href: "/dashboard/analytics", icon: BarChart3 },
   { name: "Threat Simulator", href: "/dashboard/simulator", icon: FlaskConical, badge: "Lab" },
+  { name: "Documentation", href: "/dashboard/docs", icon: BookOpen },
   { name: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
+
 
 export function DashboardSidebar({ user, unreadAlerts = 0 }: { user?: { name: string; email: string }; unreadAlerts?: number }) {
   const pathname = usePathname();

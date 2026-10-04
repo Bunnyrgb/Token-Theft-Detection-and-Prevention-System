@@ -77,15 +77,22 @@ By combining **cryptographic single-use refresh token rotation**, **non-invasive
 
 ---
 
-## 🗄️ 5. Database Schema (Supabase PostgreSQL)
+## 🗄️ 5. Database Schema & Migrations (Supabase PostgreSQL)
 
-The schema is defined in `supabase/migrations/20260904_initial_schema.sql`:
+The schema is defined in two progressive migration files in `supabase/migrations/`:
 
-1. **`users`**: `id (UUID)`, `name`, `email (UNIQUE)`, `password_hash`, `created_at`, `updated_at`.
-2. **`devices`**: `id (UUID)`, `user_id (FK)`, `device_identifier`, `device_name`, `browser`, `operating_system`, `device_type`, `first_seen_at`, `last_seen_at`, `trusted (BOOLEAN)`.
-3. **`sessions`**: `id (UUID)`, `user_id (FK)`, `session_identifier (UNIQUE)`, `refresh_token_hash`, `device_id (FK)`, `ip_address`, `user_agent`, `location`, `created_at`, `last_used_at`, `expires_at`, `revoked_at`, `risk_score`, `risk_level`, `status (Active | Suspicious | Revoked | Expired)`.
-4. **`security_events`**: `id (UUID)`, `user_id (FK)`, `session_id (FK)`, `event_type`, `severity`, `risk_score`, `ip_address`, `device_id`, `metadata (JSONB)`, `created_at`.
-5. **`alerts`**: `id (UUID)`, `user_id (FK)`, `event_id (FK)`, `title`, `message`, `severity`, `read (BOOLEAN)`, `resolved (BOOLEAN)`, `created_at`.
+1. **`20260904_initial_schema.sql`**: Base tables for users, devices, sessions, security events, and alerts with Row Level Security.
+2. **`20261004_security_event_engine.sql`**: Upgrades for enterprise-grade token security:
+   - `sessions`: Adds `previous_refresh_token_hashes (TEXT[])` for token family history, `rotation_count (INTEGER)`, `last_rotated_at (TIMESTAMPTZ)`.
+   - `security_events`: Adds `user_agent`, `location`, `description`, `reason`, `action_taken`, `is_simulation (BOOLEAN)`.
+   - `alerts`: Adds `is_simulation (BOOLEAN)` to separate simulated alerts from real attacks.
+   - `failed_logins`: Brute-force & credential stuffing detection table tracking IP, email, and timestamp.
+   - Performance Indexes: Added on `(user_id, created_at DESC)`, `(user_id, is_simulation)`, and GIN index on `previous_refresh_token_hashes`.
+
+To apply migrations in Supabase:
+1. Open your Supabase Dashboard -> **SQL Editor**.
+2. Run `supabase/migrations/20260904_initial_schema.sql`.
+3. Run `supabase/migrations/20261004_security_event_engine.sql`.
 
 ---
 
@@ -97,8 +104,8 @@ The schema is defined in `supabase/migrations/20260904_initial_schema.sql`:
 
 ### Step 1: Clone & Install Dependencies
 ```bash
-git clone <repo-url>
-cd tokenguard
+git clone https://github.com/Bunnyrgb/Token-Theft-Detection-and-Prevention-System.git
+cd Token-Theft-Detection-and-Prevention-System
 npm install
 ```
 
@@ -116,15 +123,18 @@ JWT_SECRET=super_secret_tokenguard_jwt_encryption_key_2026_xyz!
 SESSION_SECRET=super_secret_tokenguard_session_rotation_key_2026_abc!
 ```
 
-> **Note**: If Supabase credentials are not provided initially during local development, TokenGuard automatically utilizes its built-in local JSON/relational repository (`.tokenguard-data.json`) with identical RLS and isolation policies, allowing immediate out-of-the-box operation and testing!
+> **Zero-Config Local Fallback**: If Supabase credentials are not provided during local development, TokenGuard automatically utilizes its built-in local transactional database repository (`.tokenguard-data.json`) with identical RLS and isolation policies, allowing immediate out-of-the-box operation and testing without external database setup!
 
-### Step 3: Run Database Migrations (Supabase)
-In your Supabase SQL Editor, execute the contents of:
-```
-supabase/migrations/20260904_initial_schema.sql
+### Step 3: Run Tests & Build
+```bash
+# Run security test suite (14/14 automated tests)
+npm test
+
+# Build for production
+npm run build
 ```
 
-### Step 4: Launch Development Server
+### Step 4: Launch Server
 ```bash
 npm run dev
 ```
@@ -132,21 +142,50 @@ Open `http://localhost:3000` in your browser.
 
 ---
 
-## 🧪 7. Running Automated Tests
+## 🧪 7. Threat Simulation Lab (8 Attack Scenarios)
 
-Run the security test suite:
-```bash
-node scripts/test-runner.mjs
-```
+TokenGuard includes a safe, fully instrumented **Security Lab** accessible from `/dashboard/simulator`:
+1. **Normal Login (`LOGIN_SUCCESS`)**: Validates baseline zero-risk session establishment.
+2. **New Device Anomaly (`DEVICE_CHANGED`)**: Emulates browser/OS switch (+20 Risk).
+3. **Suspicious IP Drift (`IP_CHANGED`)**: Emulates VPN or unfamiliar subnet hopping (+10 Risk).
+4. **Legitimate Token Rotation (`TOKEN_ROTATED`)**: Tests RFC 6749 single-use refresh token exchange.
+5. **Token Replay / Theft Attack (`TOKEN_REPLAY_DETECTED`)**: Simulates an adversary presenting a stolen, previously rotated refresh token (+40 Risk -> Auto-Revocation).
+6. **Impossible Travel Anomaly (`IMPOSSIBLE_TRAVEL`)**: Simulates 8,000 km geographic jump in 10 minutes (+30 Risk).
+7. **Brute Force Infiltration (`LOGIN_FAILED` burst)**: Simulates 5 rapid credential failures (+20 Risk).
+8. **Suspicious Bot / Headless Client (`SUSPICIOUS_ACTIVITY`)**: Simulates automated token exfiltration script (+25 Risk).
+
+Every simulated event is tagged with `is_simulation: true` and visible when the top bar is toggled to **"Demo / Simulation"** mode, ensuring simulated attacks are **never presented as real incidents**.
 
 ---
 
-## 🔒 8. Security Guarantees
+## 🌐 8. Deployment to Render
 
-- **No Tokens in LocalStorage**: All authentication state is bound to HttpOnly, SameSite cookies.
-- **Never Display Raw Secrets**: Sessions expose safe identifiers (`sess_8f42••••91ac`), never plain tokens.
-- **Replay Proofing**: Reusing an old refresh token automatically invalidates the entire session tree.
-- **Zero Cross-User Leakage**: Server-side authorization guards and PostgreSQL RLS strictly isolate operator telemetry.
+TokenGuard is fully production-ready and configured for deployment as a Render Web Service:
+
+1. **Create Web Service** on Render connected to your Git repository.
+2. **Runtime**: `Node`
+3. **Build Command**: `npm install && npm run build`
+4. **Start Command**: `npm start`
+5. **Environment Variables**:
+   - `NODE_ENV` = `production`
+   - `JWT_SECRET` = `<Generate a secure 64-character random string>`
+   - `SESSION_SECRET` = `<Generate a secure 64-character random string>`
+   - `NEXT_PUBLIC_SUPABASE_URL` = `<Your Supabase Project URL>`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY` = `<Your Supabase Anon Key>`
+   - `SUPABASE_SERVICE_ROLE_KEY` = `<Your Supabase Service Role Key>`
+6. **Health Check Path**: `/`
+
+---
+
+## 🔒 9. Security Guarantees & Privacy
+
+- **No Plaintext Tokens**: Tokens are never stored in plaintext. Passwords use Bcrypt (12 rounds) and refresh tokens use SHA-256 digests.
+- **Strict Cookie Binding**: `tokenguard_access` and `tokenguard_refresh` cookies are configured with `HttpOnly`, `SameSite=Lax`, and `Secure` (in production).
+- **Masked Visual Display**: Front-end displays tokens safely masked (`eyJhbGci...••••••••••`).
+- **Explainable Dynamic Risk**: Transparent 4-point breakdown for every risk event (What Happened, Why Risky, Action Taken, Recommendation).
+- **Time-Decay Recovery**: Passive sessions recover safely using exponential half-life decay.
+- **Tenant Isolation**: Supabase RLS and server-side session authentication guarantee User A cannot query or mutate User B's events or sessions.
+- **Production Headers**: Strict CSP, HSTS, X-Content-Type-Options: nosniff, Referrer-Policy, and Permissions-Policy.
 
 ---
 

@@ -4,6 +4,7 @@ import { verifyPassword } from "@/lib/auth/password";
 import { extractClientTelemetry } from "@/lib/security/fingerprint";
 import { sessionManager } from "@/lib/auth/session-manager";
 import { setAuthCookies } from "@/lib/auth/cookies";
+import { eventEngine } from "@/lib/security/event-engine";
 
 export async function POST(req: NextRequest) {
   try {
@@ -18,7 +19,8 @@ export async function POST(req: NextRequest) {
     const user = await dbRepository.getUserByEmail(email);
 
     if (!user) {
-      // Fake delay to prevent timing attacks
+      // Record failed login for IP tracking
+      await dbRepository.recordFailedLogin(email, telemetry.ipAddress, telemetry.userAgent);
       await new Promise((r) => setTimeout(r, 200));
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
     }
@@ -26,48 +28,34 @@ export async function POST(req: NextRequest) {
     const isValid = await verifyPassword(password, user.password_hash);
     if (!isValid) {
       // Record failed authentication attempt for anomaly calculation
-      await dbRepository.createSecurityEvent({
-        user_id: user.id,
-        event_type: "SUSPICIOUS_ACTIVITY",
-        severity: "MEDIUM",
-        risk_score: 35,
-        ip_address: telemetry.ipAddress,
-        metadata: { reason: "Failed password challenge attempt" },
+      await dbRepository.recordFailedLogin(email, telemetry.ipAddress, telemetry.userAgent);
+      const recentFailedAttempts = await dbRepository.getRecentFailedLoginsCount(email, 15);
+
+      const penalty = Math.min(40, recentFailedAttempts * 10);
+      await eventEngine.emit({
+        userId: user.id,
+        eventType: "LOGIN_FAILED",
+        severity: recentFailedAttempts >= 3 ? "HIGH" : "MEDIUM",
+        riskScore: penalty,
+        ipAddress: telemetry.ipAddress,
+        userAgent: telemetry.userAgent,
+        location: telemetry.location,
+        description: `Failed login attempt (#${recentFailedAttempts} in 15m) from ${telemetry.location} (${telemetry.ipAddress}).`,
+        reason: "Invalid password provided.",
+        actionTaken: recentFailedAttempts >= 5 ? "Temporary challenge lock initiated." : "Authentication rejected.",
+        metadata: {
+          failedAttemptCount: recentFailedAttempts,
+        },
       });
 
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
     }
 
-    // Determine if this is a previously unseen device
-    const userDevices = await dbRepository.getDevicesByUser(user.id);
-    const isNewDevice = !userDevices.some((d) => d.device_identifier === telemetry.deviceIdentifier);
+    // Check failed attempts prior to this successful login
+    const failedPriorToLogin = await dbRepository.getRecentFailedLoginsCount(email, 15);
 
-    // Create session and issue tokens
+    // Create session and issue tokens (handles device detection & risk engine)
     const sessionResult = await sessionManager.createSessionForUser(user, telemetry);
-
-    if (isNewDevice) {
-      await dbRepository.createSecurityEvent({
-        user_id: user.id,
-        session_id: sessionResult.session.id,
-        event_type: "NEW_DEVICE",
-        severity: "MEDIUM",
-        risk_score: 25,
-        ip_address: telemetry.ipAddress,
-        device_id: sessionResult.device.id,
-        metadata: {
-          deviceName: telemetry.deviceName,
-          browser: telemetry.browser,
-          os: telemetry.operatingSystem,
-        },
-      });
-
-      await dbRepository.createAlert({
-        user_id: user.id,
-        title: "New Device Detected",
-        message: `A new device (${telemetry.deviceName} / ${telemetry.browser}) logged into your account from IP ${telemetry.ipAddress}.`,
-        severity: "MEDIUM",
-      });
-    }
 
     const response = NextResponse.json({
       success: true,
