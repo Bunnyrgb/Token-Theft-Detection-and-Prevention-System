@@ -3,7 +3,7 @@
 import React, { useState, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Shield, Lock, Mail, ArrowRight, AlertCircle, Zap, UserCheck, KeyRound } from "lucide-react";
+import { Shield, Lock, Mail, ArrowRight, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
@@ -18,7 +18,8 @@ function LoginForm() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const performLogin = async (loginEmail: string, loginPass: string) => {
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     setError(null);
     setIsLoading(true);
 
@@ -26,15 +27,15 @@ function LoginForm() {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: loginEmail, password: loginPass }),
+        body: JSON.stringify({ email, password }),
       });
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || "Authentication failed");
+        throw new Error(data.error || "Invalid email or password");
       }
 
-      // Hard navigation ensures fresh session cookies are sent directly to the server
+      // Hard navigation delivers fresh session cookies directly to server
       window.location.href = redirectUrl;
     } catch (err: any) {
       setError(err.message || "Failed to sign in. Please verify your credentials.");
@@ -42,29 +43,12 @@ function LoginForm() {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await performLogin(email, password);
-  };
-
-  const handleInstantDemoLogin = async () => {
-    setEmail("alex@tokenguard.io");
-    setPassword("Password123!");
-    await performLogin("alex@tokenguard.io", "Password123!");
-  };
-
-  const handleFillDemo = () => {
-    setEmail("alex@tokenguard.io");
-    setPassword("Password123!");
-    setError(null);
-  };
-
   return (
     <Card className="border border-cyan-500/20 bg-[#0d1322]/90 backdrop-blur-xl shadow-[0_0_35px_rgba(0,0,0,0.7)]">
       <CardHeader className="space-y-1 pb-4">
         <CardTitle className="text-xl font-bold text-white">Operator Sign In</CardTitle>
         <CardDescription className="text-xs text-slate-400">
-          Provide credentials to access your TokenGuard security console.
+          Provide your registered credentials to access the TokenGuard security operations console.
         </CardDescription>
       </CardHeader>
 
@@ -77,55 +61,11 @@ function LoginForm() {
             </div>
           )}
 
-          {/* 1-Click Instant Demo Login Banner */}
-          <div className="p-3 rounded-xl bg-gradient-to-r from-cyan-950/60 to-blue-950/60 border border-cyan-500/40 space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-xs font-bold text-cyan-300 font-mono">
-                <Zap className="h-3.5 w-3.5 text-cyan-400 animate-pulse" />
-                <span>DEMO ENVIRONMENT ACCESS</span>
-              </div>
-              <span className="text-[10px] text-cyan-400 font-mono bg-cyan-950 px-1.5 py-0.5 rounded border border-cyan-800">
-                1-CLICK READY
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-300">
-              Sign in as <span className="text-cyan-300 font-semibold">alex@tokenguard.io</span> (Lead Security Operator).
-            </p>
-            <div className="flex items-center gap-2 pt-1">
-              <Button
-                type="button"
-                variant="cyber"
-                size="sm"
-                onClick={handleInstantDemoLogin}
-                isLoading={isLoading}
-                className="w-full text-xs font-bold"
-              >
-                <UserCheck className="h-3.5 w-3.5 mr-1" />
-                Instant Demo Sign-In
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={handleFillDemo}
-                className="text-xs whitespace-nowrap"
-              >
-                Fill Form
-              </Button>
-            </div>
-          </div>
-
-          <div className="relative flex py-1 items-center">
-            <div className="flex-grow border-t border-slate-800"></div>
-            <span className="flex-shrink mx-3 text-[11px] text-slate-500 font-mono uppercase">Or Enter Manually</span>
-            <div className="flex-grow border-t border-slate-800"></div>
-          </div>
-
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-slate-300">Email Address</label>
             <Input
               type="email"
-              placeholder="alex@tokenguard.io"
+              placeholder="operator@tokenguard.io"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               icon={<Mail className="h-4 w-4" />}
