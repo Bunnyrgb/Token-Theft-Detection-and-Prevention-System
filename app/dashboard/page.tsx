@@ -114,7 +114,7 @@ export default function DashboardOverviewPage() {
               <div className="text-sm font-bold text-white flex items-center gap-2">
                 <span>Interactive Threat Simulator Lab</span>
                 <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-bold border border-cyan-500/30">
-                  Ready (8 Vectors)
+                  Ready (9 Vectors)
                 </span>
               </div>
               <p className="text-xs text-slate-400">
